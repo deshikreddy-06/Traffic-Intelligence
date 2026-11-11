@@ -1,0 +1,28 @@
+﻿HYDERABAD TRAFFIC INTELLIGENCE - QUICK START
+
+1. Extract this folder to a simple path, for example C:\HyderabadTrafficIntelligence
+2. Open two terminals in VS Code.
+
+BACKEND terminal:
+   cd backend
+   py -m venv .venv
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+   uvicorn app.main:app --reload --port 8000
+
+FRONTEND terminal:
+   cd frontend
+   npm install
+   Copy-Item .env.example .env.local
+   # Set VITE_GOOGLE_MAPS_API_KEY in .env.local, then:
+   npm run dev
+
+Google map, Places search, and route traffic setup:
+- Create a Google Maps Platform API key and enable Maps JavaScript API, Places API (New), and Routes API with billing.
+- Restrict the key to those three APIs and to the website referrers you use (for local development, localhost:5173).
+- Put the key in frontend/.env.local as VITE_GOOGLE_MAPS_API_KEY=YOUR_KEY. Never commit .env.local.
+- Restart the frontend after changing the key. Without a valid key the map shows setup/error guidance; routing remains available.
+
+The Route Planner uses Google Places (New) Autocomplete and Place Details for Telangana-wide location selection, Google Maps JavaScript API for the dark map, Google Routes API traffic-aware speed intervals for actual conditions on the selected route, and OSRM for road-network routes. Normal/green intervals are hidden; no traffic colors are invented when Google returns no non-normal traffic. Places and traffic-aware route requests may incur Google Maps Platform charges. OSRM and Nominatim public community services have usage limits and are not guaranteed production infrastructure. The displayed route duration remains an OSRM estimate. GPS is optional; manually type a start and destination if permission is denied.
+
+If an area search is ambiguous, enter a more specific landmark/address, e.g. "ICFAI University, Shankarpally Road".
