@@ -30,7 +30,7 @@ AI-based route planning for locations across India, with traffic analytics and o
 
 1. Install Docker Desktop (or Docker Engine with Compose).
 2. Copy `.env.example` to `.env`. Set a long random alphanumeric `POSTGRES_PASSWORD`, your provider keys, `WEB_PORT`, and the public site origin in `CORS_ORIGINS`.
-3. In Google Cloud, enable Maps JavaScript API and Routes API; restrict the browser key to your public HTTPS site origin. Keep `GOOGLE_MAPS_API_KEY` and `GEOAPIFY_API_KEY` as server secrets. Set `VITE_GOOGLE_MAPS_API_KEY` to the same restricted browser key.
+3. In Google Cloud, enable Maps JavaScript API for the browser key and Routes API for the server key. Restrict the browser key to your public HTTPS site origin. Keep `GOOGLE_MAPS_API_KEY` and `GEOAPIFY_API_KEY` as server secrets; use a separate referrer-restricted `VITE_GOOGLE_MAPS_API_KEY` for the browser.
 4. Run `docker compose up --build -d`.
 5. Open `http://localhost:8080` (or your configured `WEB_PORT`). The frontend container serves the built app and proxies `/api` to FastAPI. Put a TLS reverse proxy/load balancer in front of it for a public deployment.
 
@@ -39,8 +39,8 @@ The Compose stack uses PostgreSQL with a persistent volume. Provider based searc
 ### Separate frontend and backend hosting (for example, Render)
 
 - Deploy the backend as a Python web service with root directory `backend`, build command `pip install -r requirements.txt`, and start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-- Configure backend environment variables: `APP_ENV=production`, `DEBUG=false`, `DATABASE_URL` (a persistent PostgreSQL URL), `GEOAPIFY_API_KEY`, `GOOGLE_MAPS_API_KEY`, and `CORS_ORIGINS` set to the exact frontend origin (for example, `https://your-frontend.onrender.com`).
-- Deploy `frontend` as a static site with build command `npm ci && npm run build`, publish directory `dist`, and environment variables `VITE_API_URL=https://your-backend.onrender.com/api` and `VITE_GOOGLE_MAPS_API_KEY`.
+- Configure backend environment variables: `APP_ENV=production`, `DEBUG=false`, `DATABASE_URL` (a persistent PostgreSQL URL), `GEOAPIFY_API_KEY`, server-side `GOOGLE_MAPS_API_KEY`, and `CORS_ORIGINS=https://hyderabad-traffic-frontend-2026.onrender.com` (add any other frontend origins as comma-separated values).
+- Deploy `frontend` as a static site with build command `npm ci && npm run build`, publish directory `dist`, and environment variables `VITE_API_URL=https://hyderabad-traffic-api-2026.onrender.com/api` and the separate, referrer-restricted browser key `VITE_GOOGLE_MAPS_API_KEY`.
 - Redeploy the frontend after setting `VITE_API_URL`; Vite embeds it during the build. Open the frontend's URL to use the app. The backend root URL may show a 404 because its API routes live under `/api` and its interactive docs are at `/docs`.
 
 ## Project Structure

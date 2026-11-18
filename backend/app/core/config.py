@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     API_PREFIX: str = "/api"
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:5173,https://hyderabad-traffic-frontend-2026.onrender.com"
     DATABASE_URL: str = f"sqlite:///{(Path(__file__).resolve().parents[2] / 'hti_dev.db').as_posix()}"
     GOOGLE_MAPS_API_KEY: Optional[str] = None
     GEOAPIFY_API_KEY: Optional[str] = None

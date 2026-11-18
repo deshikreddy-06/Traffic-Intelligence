@@ -23,7 +23,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-hti_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hyderabad_traffic}
       APP_ENV: production
       DEBUG: "false"
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,https://hyderabad-traffic-frontend-2026.onrender.com}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       GEOAPIFY_API_KEY: ${GEOAPIFY_API_KEY:-}
     depends_on:

@@ -159,36 +159,27 @@ def test_gps_button_validation_endpoint_accepts_points_across_india():
     assert "India" in outside.json()["detail"]
 
 
-def test_places_geocoder_and_road_router_support_locations_across_india(monkeypatch):
-    class PlacesAndOsrmClient(FakeAsyncClient):
-        async def post(self, url, params=None, headers=None, json=None):
-            self.requests.append((url, params, headers, json))
-            if url != route_api.PLACES_API_BASE:
-                raise AssertionError(f"Unexpected POST URL: {url}")
-            place_id = "chennai-id" if "chennai" in json["input"].casefold() else "delhi-id"
-            return FakeResponse({"suggestions": [{"placePrediction": {"placeId": place_id}}]})
-
+def test_geoapify_geocoder_and_road_router_support_locations_across_india(monkeypatch):
+    class GeoapifyAndOsrmClient(FakeAsyncClient):
         async def get(self, url, params=None, headers=None):
             self.requests.append((url, params, headers))
-            if url.startswith("https://places.googleapis.com/v1/places/"):
-                if "chennai-id" in url:
-                    return FakeResponse({
-                        "location": {"latitude": 13.0827, "longitude": 80.2707},
-                        "displayName": {"text": "Chennai"},
-                        "formattedAddress": "Chennai, Tamil Nadu, India",
-                    })
-                return FakeResponse({
-                    "location": {"latitude": 28.6139, "longitude": 77.2090},
-                    "displayName": {"text": "Delhi"},
-                    "formattedAddress": "Delhi, India",
-                })
+            if url == "https://api.geoapify.com/v1/geocode/autocomplete":
+                place = params["text"].casefold()
+                if "chennai" in place:
+                    return FakeResponse({"results": [{
+                        "place_id": "chennai-id", "name": "Chennai", "formatted": "Chennai, Tamil Nadu, India",
+                        "lat": 13.0827, "lon": 80.2707, "result_type": "city",
+                    }]})
+                return FakeResponse({"results": [{
+                    "place_id": "delhi-id", "name": "Delhi", "formatted": "Delhi, India",
+                    "lat": 28.6139, "lon": 77.2090, "result_type": "city",
+                }]})
             return FakeResponse({
                 "code": "Ok",
                 "routes": [osrm_route(2_200_000, 28_800, [[80.2707, 13.0827], [77.2090, 28.6139]])],
             })
 
-    monkeypatch.setattr(route_api, "get_google_api_key", lambda: "test-key")
-    monkeypatch.setattr(route_api.httpx, "AsyncClient", PlacesAndOsrmClient)
+    monkeypatch.setattr(route_api.httpx, "AsyncClient", GeoapifyAndOsrmClient)
     route_api._route_cache.clear()
     route_api._geocode_cache.clear()
     with TestClient(app) as client:
@@ -198,9 +189,12 @@ def test_places_geocoder_and_road_router_support_locations_across_india(monkeypa
     assert response.json()["destination"] == "Delhi, India"
     assert response.json()["origin_point"] == [13.0827, 80.2707]
     assert response.json()["destination_point"] == [28.6139, 77.209]
-    place_requests = [request for request in PlacesAndOsrmClient.requests if request[0] == route_api.PLACES_API_BASE]
-    assert len(place_requests) == 2
-    assert all(request[3]["includedRegionCodes"] == ["in"] for request in place_requests)
+    autocomplete_requests = [
+        request for request in GeoapifyAndOsrmClient.requests
+        if request[0] == "https://api.geoapify.com/v1/geocode/autocomplete"
+    ]
+    assert len(autocomplete_requests) == 2
+    assert all(request[1]["filter"] == "countrycode:in" for request in autocomplete_requests)
 
 
 def test_coordinate_origin_from_gps_is_used_directly_with_manual_destination(monkeypatch):

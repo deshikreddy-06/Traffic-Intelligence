@@ -433,7 +433,12 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    apiFetch('/api/health').then(response => { if (!response.ok) throw new Error(); return response.json() })
+    apiFetch('/api/health').then(async response => {
+      if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}.`)
+      const body = await response.json()
+      if (body?.status !== 'healthy') throw new Error('Health endpoint returned an unexpected response.')
+      return body
+    })
       .then(() => { if (!cancelled) setHealthState('online') })
       .catch(() => { if (!cancelled) setHealthState('offline') })
     apiFetch('/api/areas').then(response => { if (!response.ok) throw new Error(); return response.json() })

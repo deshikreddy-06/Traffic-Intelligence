@@ -48,4 +48,12 @@ def test_all_feature_routers_are_registered_once_in_openapi():
     assert set(paths) == expected_paths
 
     with TestClient(app) as client:
+        root = client.get("/")
+        assert root.status_code == 200
+        assert root.json() == {
+            "application_name": "India Traffic Intelligence",
+            "status": "running",
+            "api_documentation": "/docs",
+            "health_endpoint": "/api/health",
+        }
         assert client.get("/api/health").json()["status"] == "healthy"
