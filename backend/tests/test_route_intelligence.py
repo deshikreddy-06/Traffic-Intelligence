@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from app.api import routes as route_api
 from app.main import app
 
+REAL_VALHALLA_PROVIDER = route_api._get_valhalla_routes
+
 
 ORIGIN = {"origin_lat": 17.4435, "origin_lon": 78.3772}
 DESTINATION = {"destination_lat": 17.4401, "destination_lon": 78.3489}
@@ -57,7 +59,11 @@ def use_osrm_fallback(monkeypatch):
     async def google_routes_unavailable(*args, **kwargs):
         raise RuntimeError("Use the mocked OSRM response.")
 
+    async def valhalla_unavailable(*args, **kwargs):
+        raise RuntimeError("Use the mocked OSRM response.")
+
     monkeypatch.setattr(route_api, "_get_google_routes", google_routes_unavailable)
+    monkeypatch.setattr(route_api, "_get_valhalla_routes", valhalla_unavailable)
 
 
 def setup_function():
@@ -81,7 +87,7 @@ def test_one_osrm_route_is_not_manufactured_and_is_explained(monkeypatch):
     assert result["alternatives_available"] is False
     assert "Only one distinct" in result["alternatives_note"]
     assert len(result["routes"]) == 1
-    assert FakeAsyncClient.requests[0][1]["alternatives"] == "3"
+    assert FakeAsyncClient.requests[0][1]["alternatives"] == "true"
 
 
 def test_candidates_are_deduplicated_classified_and_converted(monkeypatch):
@@ -99,7 +105,7 @@ def test_candidates_are_deduplicated_classified_and_converted(monkeypatch):
         "routes": [
             osrm_route(10_000, 1_000, shared, turn_steps),
             osrm_route(12_000, 900, alternate_fast),
-            osrm_route(10_050, 1_010, shared),  # duplicate geometry
+            osrm_route(20_000, 1_010, shared),  # same geometry with a conflicting distance
             osrm_route(14_000, 1_100, alternate),
         ],
     }
@@ -110,6 +116,7 @@ def test_candidates_are_deduplicated_classified_and_converted(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert len(data["routes"]) == 3
+    assert all(route["distance"] != 20 for route in data["routes"])
     shortest = next(route for route in data["routes"] if route["is_shortest"])
     fastest = next(route for route in data["routes"] if route["is_fastest"])
     assert shortest["distance"] == 10.0
@@ -117,10 +124,68 @@ def test_candidates_are_deduplicated_classified_and_converted(monkeypatch):
     assert shortest["route_id"] != fastest["route_id"]
     assert shortest["route_type"] == "shortest"
     assert fastest["route_type"] == "fastest estimated"
-    assert data["routes"][0]["geometry"][0] == [17.4435, 78.3772]
-    assert data["routes"][0]["steps"][0]["road_name"] == "Madhapur Road"
-    assert data["routes"][0]["steps"][0]["distance_km"] == 1.25
-    assert data["routes"][0]["steps"][0]["duration_minutes"] == 2.0
+    assert shortest["geometry"][0] == [17.4435, 78.3772]
+    assert shortest["steps"][0]["road_name"] == "Madhapur Road"
+    assert shortest["steps"][0]["distance_km"] == 1.25
+    assert shortest["steps"][0]["duration_minutes"] == 2.0
+
+
+def test_valhalla_alternatives_are_normalized_ranked_and_returned(monkeypatch):
+    paths = [
+        osrm_route(5_000, 600, [[78.3772, 17.4435], [78.363, 17.440], [78.3489, 17.4401]]),
+        osrm_route(5_800, 520, [[78.3772, 17.4435], [78.363, 17.446], [78.3489, 17.4401]]),
+        osrm_route(7_000, 700, [[78.3772, 17.4435], [78.363, 17.435], [78.3489, 17.4401]]),
+    ]
+
+    async def valhalla_routes(*args, **kwargs):
+        return {"code": "Ok", "routes": paths}
+
+    monkeypatch.setattr(route_api, "_get_valhalla_routes", valhalla_routes)
+    with TestClient(app) as client:
+        response = client.post("/api/routes/compare", json={**ORIGIN, **DESTINATION})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route_count"] == 3
+    assert data["data_source"] == "Valhalla OpenStreetMap road-network estimate"
+    fastest = next(route for route in data["routes"] if route["is_fastest"])
+    shortest = next(route for route in data["routes"] if route["is_shortest"])
+    assert fastest["duration"] == pytest.approx(520 / 60)
+    assert shortest["distance"] == 5.0
+    assert all(route["route_source"] == "Valhalla" for route in data["routes"])
+    assert len({tuple(tuple(point) for point in route["geometry"]) for route in data["routes"]}) == 3
+    assert all("distance_vs_shortest_km" in route and "time_vs_fastest_minutes" in route for route in data["routes"])
+
+
+def test_valhalla_request_asks_for_two_alternates_for_three_total_routes(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(route_api, "_get_valhalla_routes", REAL_VALHALLA_PROVIDER)
+
+    class ValhallaClient:
+        request = None
+
+        async def post(self, url, json=None, headers=None):
+            self.request = (url, json, headers)
+            return FakeResponse({"code": "Ok", "routes": []})
+
+    monkeypatch.setattr(settings, "VALHALLA_URL", "https://valhalla.example/route")
+    client = ValhallaClient()
+    response = asyncio.run(route_api._get_valhalla_routes(
+        client,
+        {"lat": 17.4435, "lon": 78.3772},
+        {"lat": 17.4401, "lon": 78.3489},
+    ))
+
+    assert response["code"] == "Ok"
+    url, payload, headers = client.request
+    assert url == "https://valhalla.example/route"
+    assert payload["alternates"] == 2
+    assert payload["costing"] == "auto"
+    assert payload["format"] == "osrm"
+    assert payload["shape_format"] == "geojson"
+    assert len(payload["locations"]) == 2
+    assert headers["User-Agent"].startswith("IndiaTrafficIntelligence/")
 
 
 def test_route_can_use_coordinates_across_india(monkeypatch):

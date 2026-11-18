@@ -26,6 +26,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,https://hyderabad-traffic-frontend-2026.onrender.com}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       GEOAPIFY_API_KEY: ${GEOAPIFY_API_KEY:-}
+      VALHALLA_URL: ${VALHALLA_URL:-https://valhalla1.openstreetmap.de/route}
     depends_on:
       postgres:
         condition: service_healthy

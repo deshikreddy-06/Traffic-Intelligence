@@ -1,7 +1,8 @@
-"""Road routing with Google Places API (New) and Google Routes API for nationwide India coverage."""
+"""India road routing with traffic-aware estimates and free OpenStreetMap alternatives."""
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.api.location_search import autocomplete_locations
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 GOOGLE_MAPS_API_KEY = None  # Will be loaded from settings
 PLACES_API_BASE = "https://places.googleapis.com/v1/places:autocomplete"
@@ -26,7 +28,7 @@ NOMINATIM_USER_AGENT = "IndiaTrafficIntelligence/1.0 (academic project)"
 GEOCODE_CACHE_TTL = 30 * 24 * 60 * 60
 ROUTE_CACHE_TTL = 5 * 60
 NOMINATIM_MIN_INTERVAL = 1.05
-MAX_ROUTES = 4
+MAX_ROUTES = 3
 
 _cache_lock = RLock()
 _geocode_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -363,59 +365,35 @@ def _format_step(step: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_routes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _normalize_routes(payload: dict[str, Any], route_source: str = "OSRM") -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    for osrm_route in payload.get("routes", []):
-        coordinates = (osrm_route.get("geometry") or {}).get("coordinates") or []
+    for provider_route in payload.get("routes", []):
+        coordinates = (provider_route.get("geometry") or {}).get("coordinates") or []
         if len(coordinates) < 2:
             continue
         geometry = [[float(lat), float(lon)] for lon, lat, *_ in coordinates]
-        distance_meters = float(osrm_route.get("distance") or 0)
-        duration_seconds = float(osrm_route.get("duration") or 0)
+        distance_meters = float(provider_route.get("distance") or 0)
+        duration_seconds = float(provider_route.get("duration") or 0)
         if distance_meters <= 0 or duration_seconds <= 0:
             continue
 
-        legs = osrm_route.get("legs") or []
+        legs = provider_route.get("legs") or []
         steps = [_format_step(step) for leg in legs for step in leg.get("steps", [])]
-        candidate = {
-            "distance_meters": distance_meters,
-            "distance": round(distance_meters / 1000, 2),
-            "duration": round(duration_seconds / 60, 1),
+        candidates.append({
+            "distance": distance_meters / 1000,
+            "duration": duration_seconds / 60,
+            "static_duration": None,
+            "traffic_aware": False,
+            "route_source": route_source,
             "geometry": geometry,
             "steps": steps,
-        }
-        if any(_nearly_same_route(candidate, prior) for prior in candidates):
-            continue
-        candidates.append(candidate)
-        if len(candidates) == MAX_ROUTES:
-            break
+        })
 
-    if not candidates:
-        raise HTTPException(status_code=404, detail="The routing service returned no usable road routes.")
-
-    shortest = min(candidates, key=lambda route: route["distance_meters"])
-    fastest = min(candidates, key=lambda route: route["duration"])
-    for index, route in enumerate(candidates, start=1):
-        route["route_id"] = f"route-{index}"
-        route["route_number"] = index
-        route["is_shortest"] = route is shortest
-        route["is_fastest"] = route is fastest
-        if route is shortest and route is fastest:
-            route["route_type"] = "shortest and fastest"
-        elif route is shortest:
-            route["route_type"] = "shortest"
-        elif route is fastest:
-            route["route_type"] = "fastest estimated"
-        else:
-            route["route_type"] = "alternative"
-        route.pop("distance_meters")
-    return candidates
+    return _rank_route_candidates(candidates)
 
 
 def _nearly_same_route(first: dict[str, Any], second: dict[str, Any]) -> bool:
     if not first["geometry"] or not second["geometry"]:
-        return False
-    if max(first["distance"], second["distance"]) / min(first["distance"], second["distance"]) > 1.08:
         return False
     
     def project_line(geometry: list[list[float]], reference_lat: float) -> list[tuple[float, float]]:
@@ -476,8 +454,49 @@ def _nearly_same_route(first: dict[str, Any], second: dict[str, Any]) -> bool:
     )
 
 
+def _rank_route_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate real provider paths, then retain the fastest, shortest, and a distinct alternative."""
+    distinct: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not candidate.get("geometry") or any(_nearly_same_route(candidate, route) for route in distinct):
+            continue
+        distinct.append(candidate)
+    if not distinct:
+        raise HTTPException(status_code=404, detail="The routing services returned no usable road routes.")
+
+    fastest = min(distinct, key=lambda route: route["duration"])
+    shortest = min(distinct, key=lambda route: route["distance"])
+    selected: list[dict[str, Any]] = []
+    for route in (fastest, shortest):
+        if route not in selected:
+            selected.append(route)
+    for route in sorted(distinct, key=lambda item: item["duration"]):
+        if route not in selected and len(selected) < MAX_ROUTES:
+            selected.append(route)
+
+    fastest_duration = fastest["duration"]
+    shortest_distance = shortest["distance"]
+    for index, route in enumerate(selected, start=1):
+        route["route_id"] = f"route-{index}"
+        route["route_number"] = index
+        route["is_shortest"] = route is shortest
+        route["is_fastest"] = route is fastest
+        route["distance_vs_shortest_km"] = round(max(0, route["distance"] - shortest_distance), 2)
+        route["time_vs_fastest_minutes"] = round(max(0, route["duration"] - fastest_duration), 1)
+        if route is shortest and route is fastest:
+            route["route_type"] = "shortest and fastest"
+        elif route is shortest:
+            route["route_type"] = "shortest"
+        elif route is fastest:
+            route["route_type"] = "fastest estimated"
+        else:
+            route["route_type"] = "alternative"
+    return selected
+
+
 async def _get_osrm_routes(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
-    params = {"overview": "full", "geometries": "geojson", "steps": "true", "alternatives": "3"}
+    # OSRM's HTTP API accepts a boolean here; the server decides how many alternatives to return.
+    params = {"overview": "full", "geometries": "geojson", "steps": "true", "alternatives": "true"}
     try:
         response = await client.get(url, params=params, headers={"User-Agent": NOMINATIM_USER_AGENT})
         response.raise_for_status()
@@ -494,6 +513,46 @@ async def _get_osrm_routes(client: httpx.AsyncClient, url: str) -> dict[str, Any
         raise HTTPException(status_code=502, detail="The free OSRM routing service is temporarily unavailable.") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="The free OSRM routing service is temporarily unavailable.") from exc
+
+
+async def _get_valhalla_routes(
+    client: httpx.AsyncClient,
+    origin: dict[str, Any],
+    destination: dict[str, Any],
+) -> dict[str, Any]:
+    """Request up to three road-network alternatives from the configurable free Valhalla service."""
+    from app.core.config import settings
+
+    payload = {
+        "locations": [
+            {"lat": origin["lat"], "lon": origin["lon"], "type": "break"},
+            {"lat": destination["lat"], "lon": destination["lon"], "type": "break"},
+        ],
+        "costing": "auto",
+        "alternates": MAX_ROUTES - 1,
+        "format": "osrm",
+        "shape_format": "geojson",
+        "units": "kilometers",
+        "language": "en-IN",
+    }
+    try:
+        response = await client.post(
+            settings.VALHALLA_URL,
+            json=payload,
+            headers={"User-Agent": NOMINATIM_USER_AGENT},
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Valhalla routing timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail="Valhalla routing is temporarily unavailable.") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Valhalla returned an invalid response.") from exc
+
+    if result.get("code") != "Ok" or not isinstance(result.get("routes"), list):
+        raise HTTPException(status_code=502, detail="Valhalla returned no usable road routes.")
+    return result
 
 
 async def _get_google_routes(client: httpx.AsyncClient, origin: dict[str, Any], destination: dict[str, Any]) -> dict[str, Any]:
@@ -639,41 +698,21 @@ def _normalize_google_routes(data: dict[str, Any], origin: dict[str, Any], desti
                 })
         
         route_label = route.get("routeLabels", ["ALTERNATIVE"])[0]
-        route_type = "alternative"
-        if route_label == "DEFAULT_ROUTE":
-            route_type = "fastest estimated"
-        elif route_label == "SHORTEST":
-            route_type = "shortest"
-        
         candidates.append({
             "distance": round(distance_meters / 1000, 2),
             "duration": round(duration_seconds / 60, 1),
             "static_duration": round(static_duration_seconds / 60, 1) if static_duration_seconds is not None else None,
+            "traffic_aware": True,
+            "route_source": "Google Routes",
             "geometry": geometry,
             "steps": steps,
-            "route_type": route_type,
             "route_label": route_label,
         })
     
     if not candidates:
         raise HTTPException(status_code=404, detail="No usable traffic-aware routes were returned.")
     
-    shortest = min(candidates, key=lambda r: r["distance"])
-    fastest = min(candidates, key=lambda r: r["duration"])
-    
-    for index, route in enumerate(candidates, start=1):
-        route["route_id"] = f"route-{index}"
-        route["route_number"] = index
-        route["is_shortest"] = route is shortest
-        route["is_fastest"] = route is fastest
-        if route is shortest and route is fastest:
-            route["route_type"] = "shortest and fastest"
-        elif route is shortest:
-            route["route_type"] = "shortest"
-        elif route is fastest:
-            route["route_type"] = "fastest estimated"
-    
-    return candidates
+    return _rank_route_candidates(candidates)
 
 
 @router.post("/routes/compare")
@@ -713,22 +752,56 @@ async def compare_routes(req: RouteCompareRequest):
         if cached:
             _route_cache.pop(cache_key, None)
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+    routes: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(25, connect=8)) as client:
+        # Preserve the existing traffic-aware Google estimate, then supplement it with
+        # genuine OSM alternatives from free Valhalla. Both providers return road paths.
         try:
             google_data = await _get_google_routes(client, origin, destination)
             routes = _normalize_google_routes(google_data, origin, destination)
-            data_source = "Traffic-aware route estimate"
-            traffic_note = "Estimated travel time uses current traffic conditions where available. Typical travel time is also shown for comparison."
-        except Exception:
-            url = f"{OSRM}/{origin['lon']},{origin['lat']};{destination['lon']},{destination['lat']}"
-            payload = await _get_osrm_routes(client, url)
-            if payload.get("code") != "Ok" or not payload.get("routes"):
-                if payload.get("code") in {"NoRoute", "NoSegment"}:
+        except Exception as exc:
+            logger.info("Google traffic-aware routing unavailable (%s); using open routing providers.", type(exc).__name__)
+
+        if len(routes) < MAX_ROUTES:
+            try:
+                valhalla_data = await _get_valhalla_routes(client, origin, destination)
+                valhalla_routes = _normalize_routes(valhalla_data, route_source="Valhalla")
+                routes = _rank_route_candidates([*routes, *valhalla_routes])
+            except Exception as exc:
+                logger.warning("Valhalla alternatives unavailable (%s); trying OSRM fallback.", type(exc).__name__)
+
+        if len(routes) < MAX_ROUTES:
+            try:
+                osrm_url = f"{OSRM}/{origin['lon']},{origin['lat']};{destination['lon']},{destination['lat']}"
+                osrm_data = await _get_osrm_routes(client, osrm_url)
+                if osrm_data.get("code") == "Ok" and osrm_data.get("routes"):
+                    osrm_routes = _normalize_routes(osrm_data, route_source="OSRM")
+                    routes = _rank_route_candidates([*routes, *osrm_routes])
+                elif not routes and osrm_data.get("code") in {"NoRoute", "NoSegment"}:
                     raise HTTPException(status_code=404, detail="No drivable road route was found between these locations.")
-                raise HTTPException(status_code=502, detail="The routing service could not calculate a road route. Please retry.")
-            routes = _normalize_routes(payload)
-            data_source = "Road-network estimate"
-            traffic_note = "Live traffic-aware routing is unavailable for this request; travel time is a road-network estimate."
+            except HTTPException as exc:
+                if exc.status_code == 404 and not routes:
+                    raise
+                logger.warning("OSRM fallback unavailable (%s).", exc.detail)
+            except Exception as exc:
+                logger.warning("OSRM fallback unavailable (%s).", type(exc).__name__)
+
+    if not routes:
+        raise HTTPException(status_code=502, detail="All road-routing providers are temporarily unavailable. Please retry.")
+
+    sources = {route.get("route_source", "OSRM") for route in routes}
+    has_traffic_aware_route = any(route.get("traffic_aware") for route in routes)
+    has_open_alternative = any(source in {"Valhalla", "OSRM"} for source in sources)
+    if has_traffic_aware_route and has_open_alternative:
+        data_source = "Google traffic-aware + OpenStreetMap alternatives"
+        traffic_note = "Google routes include traffic-aware estimates; Valhalla/OSRM alternatives use road-network estimates without live traffic."
+    elif has_traffic_aware_route:
+        data_source = "Traffic-aware route estimate"
+        traffic_note = "Estimated travel time uses current traffic conditions where available. Typical travel time is also shown for comparison."
+    else:
+        provider_name = "Valhalla" if "Valhalla" in sources else "OSRM"
+        data_source = f"{provider_name} OpenStreetMap road-network estimate"
+        traffic_note = "Live traffic-aware routing is unavailable for this request; travel times are road-network estimates."
 
     same_best = next(route for route in routes if route["is_shortest"])["route_id"] == next(route for route in routes if route["is_fastest"])["route_id"]
     alternatives_note = (

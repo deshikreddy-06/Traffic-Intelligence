@@ -18,6 +18,8 @@ export interface NormalizedRouteOption {
   static_duration: number | null
   is_shortest: boolean
   is_fastest: boolean
+  traffic_aware: boolean
+  route_source: string
   geometry: RoutePoint[]
   steps: NormalizedRouteStep[]
 }
@@ -109,6 +111,8 @@ export function normalizeRouteResult(value: unknown): NormalizedRouteResult {
       static_duration: routeNumber(route.static_duration),
       is_shortest: false as boolean,
       is_fastest: false as boolean,
+      traffic_aware: route.traffic_aware === true,
+      route_source: typeof route.route_source === 'string' ? route.route_source : 'OSRM',
       geometry,
       steps: rawSteps.map(normalizeStep),
     } satisfies NormalizedRouteOption]
@@ -133,7 +137,7 @@ export function normalizeRouteResult(value: unknown): NormalizedRouteResult {
   const destinationPoint = normalizePoint(response.destination_point) ?? routes[0].geometry[routes[0].geometry.length - 1]
   const baseNote = typeof response.alternatives_note === 'string'
     ? response.alternatives_note
-    : routes.length > 1 ? `${routes.length} distinct road routes returned by OSRM.` : 'Only one distinct road route was returned; alternatives are unavailable for this trip.'
+    : routes.length > 1 ? `${routes.length} distinct road routes returned by the routing providers.` : 'Only one distinct road route was returned; alternatives are unavailable for this trip.'
   return {
     origin: typeof response.origin === 'string' ? response.origin : 'Starting point',
     destination: typeof response.destination === 'string' ? response.destination : 'Destination',

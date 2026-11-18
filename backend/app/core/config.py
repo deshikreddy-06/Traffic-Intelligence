@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite:///{(Path(__file__).resolve().parents[2] / 'hti_dev.db').as_posix()}"
     GOOGLE_MAPS_API_KEY: Optional[str] = None
     GEOAPIFY_API_KEY: Optional[str] = None
+    VALHALLA_URL: str = "https://valhalla1.openstreetmap.de/route"
     ML_MODEL_PATH: str = "./ml/artifacts"
     PREDICTION_CONFIDENCE_THRESHOLD: float = 0.7
     INGESTION_ENABLED: bool = False

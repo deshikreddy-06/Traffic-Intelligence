@@ -36,10 +36,12 @@ AI-based route planning for locations across India, with traffic analytics and o
 
 The Compose stack uses PostgreSQL with a persistent volume. Provider based search and traffic features require outbound HTTPS from the backend, valid API keys, and any provider billing/quota setup. GPS requires HTTPS in public deployments. Back up the PostgreSQL volume before upgrades; schema changes are currently initialized with SQLAlchemy `create_all`, not a production migration workflow.
 
+Road-route alternatives use the free Valhalla OpenStreetMap service (`VALHALLA_URL`) and fall back to the public OSRM service when Valhalla is unavailable or returns too few paths. Both public routing services are community infrastructure with availability and fair-use limits; the app deduplicates and returns only real provider geometries.
+
 ### Separate frontend and backend hosting (for example, Render)
 
 - Deploy the backend as a Python web service with root directory `backend`, build command `pip install -r requirements.txt`, and start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-- Configure backend environment variables: `APP_ENV=production`, `DEBUG=false`, `DATABASE_URL` (a persistent PostgreSQL URL), `GEOAPIFY_API_KEY`, server-side `GOOGLE_MAPS_API_KEY`, and `CORS_ORIGINS=https://hyderabad-traffic-frontend-2026.onrender.com` (add any other frontend origins as comma-separated values).
+- Configure backend environment variables: `APP_ENV=production`, `DEBUG=false`, `DATABASE_URL` (a persistent PostgreSQL URL), `GEOAPIFY_API_KEY`, server-side `GOOGLE_MAPS_API_KEY`, `VALHALLA_URL` (optional; defaults to the public Valhalla OSM service), and `CORS_ORIGINS=https://hyderabad-traffic-frontend-2026.onrender.com` (add any other frontend origins as comma-separated values).
 - Deploy `frontend` as a static site with build command `npm ci && npm run build`, publish directory `dist`, and environment variables `VITE_API_URL=https://hyderabad-traffic-api-2026.onrender.com/api` and the separate, referrer-restricted browser key `VITE_GOOGLE_MAPS_API_KEY`.
 - Redeploy the frontend after setting `VITE_API_URL`; Vite embeds it during the build. Open the frontend's URL to use the app. The backend root URL may show a 404 because its API routes live under `/api` and its interactive docs are at `/docs`.
 

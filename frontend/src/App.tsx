@@ -627,7 +627,6 @@ export default function App() {
   const shortestRoute = result?.routes.find(route => route.is_shortest)
   const fastestRoute = result?.routes.find(route => route.is_fastest)
   const orderedRoutes = result ? [...result.routes].sort((a, b) => Number(b.is_fastest) - Number(a.is_fastest) || (a.duration ?? Infinity) - (b.duration ?? Infinity)) : []
-  const hasTrafficAwareEstimates = result?.data_source.toLowerCase().includes('traffic-aware') ?? false
   const navigationProgress = navigationPosition && activeRoute ? progressOnRoute(navigationPosition, activeRoute.geometry) : null
   const routeMeters = (activeRoute?.distance ?? 0) * 1000
   const travelledForSteps = navigationProgress ? navigationProgress.fraction * routeMeters : 0
@@ -1105,14 +1104,14 @@ export default function App() {
                           </span>
                         </div>
                         <div className="flex gap-4 mt-3 text-sm"><span className="flex items-center gap-1"><MapPin size={15} />{formatRouteNumber(route.distance, 2)}{route.distance === null ? '' : ' km'}</span><span className="flex items-center gap-1"><Clock size={15} />{formatDurationMinutes(route.duration)} estimated</span></div>
-                        <p className={`text-[10px] font-semibold mt-2 ${hasTrafficAwareEstimates ? 'text-emerald-700' : 'text-amber-700'}`}>{hasTrafficAwareEstimates ? 'Traffic-aware time estimate' : 'Road-network ETA (estimated)'}</p>
-                        {!hasTrafficAwareEstimates && route.duration !== null && <p className="text-[11px] text-slate-500 mt-1">{formatEstimatedArrival(route.duration)} based on estimated drive time.</p>}
-                        {hasTrafficAwareEstimates && route.static_duration !== null && <p className="text-[11px] text-slate-500 mt-1">Typical time without current traffic: {formatDurationMinutes(route.static_duration)}{route.duration !== null && route.duration > route.static_duration ? ` · current traffic adds ${formatDurationMinutes(route.duration - route.static_duration)}` : ''}</p>}
+                        <p className={`text-[10px] font-semibold mt-2 ${route.traffic_aware ? 'text-emerald-700' : 'text-amber-700'}`}>{route.traffic_aware ? 'Traffic-aware time estimate' : 'Road-network ETA (estimated)'}</p>
+                        {!route.traffic_aware && route.duration !== null && <p className="text-[11px] text-slate-500 mt-1">{formatEstimatedArrival(route.duration)} based on estimated drive time.</p>}
+                        {route.traffic_aware && route.static_duration !== null && <p className="text-[11px] text-slate-500 mt-1">Typical time without current traffic: {formatDurationMinutes(route.static_duration)}{route.duration !== null && route.duration > route.static_duration ? ` · current traffic adds ${formatDurationMinutes(route.duration - route.static_duration)}` : ''}</p>}
                         <div className="grid grid-cols-2 gap-2 mt-3 text-xs text-slate-600">
                           <span>Distance vs shortest: {distanceDifference === null ? 'Unavailable' : `+${formatRouteNumber(distanceDifference, 2)} km`}</span>
                           <span>Time vs fastest: {timeDifference === null ? 'Unavailable' : `+${formatDurationMinutes(timeDifference)}`}</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-2 capitalize">Route type: {route.route_type} · {result.data_source}</p>
+                        <p className="text-[11px] text-slate-500 mt-2 capitalize">Route type: {route.route_type} · {route.route_source}</p>
                       </button>
                     )
                   })}
