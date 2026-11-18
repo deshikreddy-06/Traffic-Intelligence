@@ -132,6 +132,15 @@ if len({name for name, _, _ in API_ROUTERS}) != len(API_ROUTERS):
 for _, api_router, tag in API_ROUTERS:
     app.include_router(api_router, prefix=settings.API_PREFIX, tags=[tag])
 
+@app.get("/", include_in_schema=False)
+def root():
+    return {
+        "application_name": "India Traffic Intelligence",
+        "status": "running",
+        "api_documentation": "/docs",
+        "health_endpoint": "/api/health",
+    }
+
 @app.get("/api/health")
 def health_check():
     return {"status": "healthy", "app": settings.APP_NAME, "environment": settings.APP_ENV}

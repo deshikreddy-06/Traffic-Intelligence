@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.log
+**/pytest-cache-files-*
+frontend/dist
+backend/hti_dev.db

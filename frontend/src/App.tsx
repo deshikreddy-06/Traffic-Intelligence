@@ -5,6 +5,7 @@ import { createOffRouteTracker, currentStepIndex, formatDistance, progressOnRout
 import { GoogleMapsCanvas, loadGoogleRoutesLibrary } from './GoogleMaps'
 import { LocationAutocomplete, type SelectedLocation } from './LocationAutocomplete'
 import { TrafficPrediction } from './TrafficPrediction'
+import { apiFetch } from './api'
 
 type Point = RoutePoint
 type RouteResult = NormalizedRouteResult
@@ -105,7 +106,7 @@ function GpsContribution() {
   const lastSentAt = useRef(0)
   const inflight = useRef(Promise.resolve())
 
-  const refreshStats = () => fetch('/api/traffic/gps-observations/stats', { method: 'GET' })
+  const refreshStats = () => apiFetch('/api/traffic/gps-observations/stats', { method: 'GET' })
     .then(async response => {
       if (!response.ok) throw new Error(`GPS sample summary API returned HTTP ${response.status}. Restart the project backend and confirm /api/traffic/gps-observations/stats is available.`)
       if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('GPS sample summary endpoint returned a non-JSON response. Check the frontend /api proxy and backend version.')
@@ -128,7 +129,7 @@ function GpsContribution() {
     sessionId.current = null
     sessionToken.current = null
     if (id) {
-      try { await fetch(`/api/traffic/gps-sessions/${id}/stop`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, keepalive: true }) } catch { /* Local collection is already stopped. */ }
+      try { await apiFetch(`/api/traffic/gps-sessions/${id}/stop`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, keepalive: true }) } catch { /* Local collection is already stopped. */ }
     }
     setMessage(reason)
     void refreshStats()
@@ -154,7 +155,7 @@ function GpsContribution() {
     if (!window.isSecureContext && location.hostname !== 'localhost') { setError('Browser GPS requires HTTPS (or localhost).'); return }
     const id = crypto.randomUUID()
     try {
-      const response = await fetch(`/api/traffic/gps-sessions/${id}/start`, {
+      const response = await apiFetch(`/api/traffic/gps-sessions/${id}/start`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ consent_confirmed: true, consent_version: GPS_CONSENT_VERSION }),
       })
@@ -182,7 +183,7 @@ function GpsContribution() {
         }
         inflight.current = inflight.current.then(async () => {
           if (!activeRef.current || sessionId.current !== id) return
-          const result = await fetch(`/api/traffic/gps-sessions/${id}/readings`, {
+          const result = await apiFetch(`/api/traffic/gps-sessions/${id}/readings`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken.current}` }, body: JSON.stringify(reading),
           })
           const data = await result.json()
@@ -206,7 +207,7 @@ function GpsContribution() {
     if (!id || !token) { setError('This browser no longer has the session access token, so its samples cannot be deleted here.'); return }
     await stop('Collection stopped.')
     try {
-      const response = await fetch(`/api/traffic/gps-sessions/${id}/observations`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      const response = await apiFetch(`/api/traffic/gps-sessions/${id}/observations`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
       const data = await response.json()
       if (!response.ok) throw new Error(data.detail || 'Could not delete this session.')
       localStorage.removeItem('hti-gps-session-to-delete')
@@ -223,7 +224,7 @@ function GpsContribution() {
     if (!id || !token) { setError('This browser no longer has the session access token.'); return }
     setError('')
     try {
-      const response = await fetch(`/api/traffic/gps-sessions/${id}/stop`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      const response = await apiFetch(`/api/traffic/gps-sessions/${id}/stop`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
       const data = await response.json()
       if (!response.ok) throw new Error(data.detail || 'Could not stop the saved GPS session.')
       setMessage('Saved GPS session stopped. You can now delete its samples.')
@@ -432,10 +433,10 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/health').then(response => { if (!response.ok) throw new Error(); return response.json() })
+    apiFetch('/api/health').then(response => { if (!response.ok) throw new Error(); return response.json() })
       .then(() => { if (!cancelled) setHealthState('online') })
       .catch(() => { if (!cancelled) setHealthState('offline') })
-    fetch('/api/areas').then(response => { if (!response.ok) throw new Error(); return response.json() })
+    apiFetch('/api/areas').then(response => { if (!response.ok) throw new Error(); return response.json() })
       .then(areas => { if (!cancelled && Array.isArray(areas)) setSupportedAreaCount(areas.length) })
     return () => { cancelled = true }
   }, [])
@@ -461,7 +462,7 @@ export default function App() {
     setTrafficError('')
     const params = new URLSearchParams({ limit: '1000' })
     if (trafficAreaFilter.trim()) params.set('area', trafficAreaFilter.trim())
-    fetch(`/api/traffic/observations?${params.toString()}`)
+    apiFetch(`/api/traffic/observations?${params.toString()}`)
       .then(async response => {
         if (!response.ok) throw new Error(`Traffic observations are unavailable (HTTP ${response.status}).`)
         const body = await response.json()
@@ -478,7 +479,7 @@ export default function App() {
     if (!['dashboard', 'analytics', 'monitoring', 'sources', 'predictions'].includes(tab)) return
     if (trafficStats) return
     let cancelled = false
-    fetch('/api/traffic/stats')
+    apiFetch('/api/traffic/stats')
       .then(async response => {
         if (!response.ok) throw new Error('Traffic observation summary is temporarily unavailable.')
         return response.json() as Promise<TrafficStats>
@@ -491,7 +492,7 @@ export default function App() {
   useEffect(() => {
     if (tab !== 'analytics') return
     let cancelled = false
-    fetch('/api/analytics/areas')
+    apiFetch('/api/analytics/areas')
       .then(async response => { if (!response.ok) throw new Error(`Area analytics unavailable (HTTP ${response.status}).`); return response.json() })
       .then(data => { if (!cancelled && Array.isArray(data.areas)) { setAnalyticsAreas(data.areas); if (data.areas.length && !data.areas.some((item: AnalyticsAreaSummary) => item.area === analyticsArea)) setAnalyticsArea(data.areas[0].area) } })
       .catch(failure => { if (!cancelled) setAnalyticsError(failure instanceof Error ? failure.message : 'Area analytics unavailable.') })
@@ -502,7 +503,7 @@ export default function App() {
     if (tab !== 'analytics' || !analyticsArea) return
     let cancelled = false
     const params = new URLSearchParams({ area: analyticsArea, days: '30' })
-    fetch(`/api/analytics/hourly?${params.toString()}`)
+    apiFetch(`/api/analytics/hourly?${params.toString()}`)
       .then(async response => { if (!response.ok) throw new Error(`Hourly analytics unavailable (HTTP ${response.status}).`); return response.json() })
       .then(data => { if (!cancelled) setHourlyAnalytics(data as HourlyAnalytics) })
       .catch(failure => { if (!cancelled) setAnalyticsError(failure instanceof Error ? failure.message : 'Hourly analytics unavailable.') })
@@ -524,7 +525,7 @@ export default function App() {
         const longitude = position.coords.longitude
         try {
           if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error('The browser returned invalid GPS coordinates. Enter a starting point manually.')
-          const validation = await fetch('/api/routes/validate-point', {
+          const validation = await apiFetch('/api/routes/validate-point', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ latitude, longitude }),
           })
@@ -597,7 +598,7 @@ export default function App() {
         body.destination_lat = destinationPlace.latitude
         body.destination_lon = destinationPlace.longitude
       }
-      const response = await fetch('/api/routes/compare', {
+      const response = await apiFetch('/api/routes/compare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -647,7 +648,7 @@ export default function App() {
     setRerouting(true)
     setNavigationError('')
     try {
-      const response = await fetch('/api/routes/compare', {
+      const response = await apiFetch('/api/routes/compare', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ origin: `${point[0]}, ${point[1]}`, destination: navigationDestination.current }),
       })
@@ -722,7 +723,7 @@ export default function App() {
           if (navigationBoundaryValidated.current) { acceptNavigationPoint(point); return }
           if (navigationBoundaryCheckPending.current) return
           navigationBoundaryCheckPending.current = true
-          fetch('/api/routes/validate-point', {
+          apiFetch('/api/routes/validate-point', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ latitude: point[0], longitude: point[1] }),
           }).then(async response => {

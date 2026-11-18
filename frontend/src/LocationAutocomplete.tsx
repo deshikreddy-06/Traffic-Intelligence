@@ -1,3 +1,4 @@
+import { apiFetch } from './api'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode, KeyboardEvent } from 'react'
 import { Building2, Bus, GraduationCap, HeartPulse, Landmark, Loader2, MapPin, Plane, ShoppingBag, Train, Utensils, X } from 'lucide-react'
@@ -103,7 +104,7 @@ export function LocationAutocomplete({ label, value, placeholder, onChange, onSe
       lastRequestedQueryRef.current = normalizedQuery
       setError('')
       try {
-        const response = await fetch(`/api/locations/autocomplete?text=${encodeURIComponent(query)}`, { signal: controller.signal })
+        const response = await apiFetch(`/api/locations/autocomplete?text=${encodeURIComponent(query)}`, { signal: controller.signal })
         const body = await response.json() as AutocompleteResponse & { detail?: string }
         if (!response.ok) {
           const statusMessage = response.status === 429 || response.status === 503

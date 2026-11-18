@@ -1,3 +1,4 @@
+import { apiFetch } from './api'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Activity, AlertCircle, ArrowDownRight, ArrowUpRight, Clock3, Gauge, Route, Sparkles } from 'lucide-react'
@@ -124,7 +125,7 @@ export function TrafficPrediction() {
         routeRequest.destination_lat = destinationPlace.latitude
         routeRequest.destination_lon = destinationPlace.longitude
       }
-      const routeResponse = await fetch('/api/routes/compare', {
+      const routeResponse = await apiFetch('/api/routes/compare', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeRequest),
       })
       const routePayload = await routeResponse.json()
