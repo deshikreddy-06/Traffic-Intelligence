@@ -1,4 +1,5 @@
-# India Traffic Intelligence (HTI)
+**#AI Based Smart Traffic Prediction System**
+## India Traffic Intelligence (ITI)
 
 AI-based route planning for locations across India, with traffic analytics and observations currently focused on Hyderabad.
 
